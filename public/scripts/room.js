@@ -31,6 +31,8 @@ function createPeer(userIdToCall) {
     });
     peer.onnegotiationneeded = () => userIdToCall ? handleNegotiationNeededEvent(peer, userIdToCall) : null;
     peer.onicecandidate = handleICECandidateEvent;
+
+    
     peer.ontrack = (e) => {
         const container = document.createElement('div');
         container.classList.add('remote-video-container');
@@ -41,16 +43,66 @@ function createPeer(userIdToCall) {
         video.classList.add("remote-video");
         container.appendChild(video);
         if (isAdmin) {
-            const button = document.createElement("button");
-            button.innerHTML = `Hide user's cam`;
-            button.classList.add('button');
-            button.setAttribute('user-id', userIdToCall);
-            container.appendChild(button);
+            const btnRemoteCam = document.createElement("button");
+            btnRemoteCam.innerHTML = `Hide user's cam`;
+            btnRemoteCam.classList.add('button','btn-toggle-remote-cam');
+            btnRemoteCam.setAttribute('user-id', userIdToCall);
+            btnRemoteCam.addEventListener('click', (e) =>  {
+                alert("Toggle remote Camera!");
+                toggleRemoteCam(e, userIdToCall, btnRemoteCam);
+            });
+            container.appendChild(btnRemoteCam);
+
+            // Mute Button
+            const muteButton = document.createElement('button');
+            muteButton.textContent = 'Mute';
+            muteButton.classList.add('btn-toggle-remote-mic', 'button');
+            muteButton.addEventListener('click', () =>  {
+                alert("Toggle Mic!");
+                toggleMute(userIdToCall, e.streams[0], muteButton);
+            });
+
+            container.appendChild(muteButton);
+
+            // Flip camera
+            const flipButton = document.createElement('button');
+            flipButton.textContent = 'Flip Camera';
+            flipButton.classList.add('flip-button', 'button');
+            flipButton.addEventListener('click', () => {
+                alert("Flipping camera!");
+                socket.emit('flip camera request', { userId: userIdToCall });
+            });
+
+            container.appendChild(flipButton);
         }
         container.id = userIdToCall;
         remoteVideoContainer.appendChild(container);
     }
     return peer;
+}
+
+function toggleMute(userID,stream, button) {
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length > 0) {
+        let isMuted = audioTracks[0].enabled;
+        audioTracks.forEach(track => track.enabled = !isMuted);
+        button.innerHTML = isMuted ? "Unmute" : "Mute";
+        isMuted = !audioTracks[0].enabled;
+        socket.emit('mute action', { userId: userID, isMuted });
+    }
+}
+
+
+//remoteVideoContainer.addEventListener('click', (e) => {
+function toggleRemoteCam(e, userId, button) {
+    alert(e);
+    if (e.target.innerHTML.includes('Hide')) {
+        e.target.innerHTML = 'show remote cam';
+        socket.emit('hide remote cam', e.target.getAttribute('user-id'));
+    } else {
+        e.target.innerHTML = `Hide user's cam`;
+        socket.emit('show remote cam', e.target.getAttribute('user-id'));
+    }
 }
 
 async function handleNegotiationNeededEvent(peer, userIdToCall) {
@@ -123,15 +175,7 @@ toggleButton.addEventListener('click', () => {
     }
 });
 
-remoteVideoContainer.addEventListener('click', (e) => {
-    if (e.target.innerHTML.includes('Hide')) {
-        e.target.innerHTML = 'show remote cam';
-        socket.emit('hide remote cam', e.target.getAttribute('user-id'));
-    } else {
-        e.target.innerHTML = `Hide user's cam`;
-        socket.emit('show remote cam', e.target.getAttribute('user-id'));
-    }
-})
+
 
 function hideCam() {
     const videoTrack = userStream.getTracks().find(track => track.kind === 'video');
@@ -165,6 +209,43 @@ async function init() {
         socket.on("show cam", showCam);
 
         socket.on('server is full', () => alert("chat is full"));
+
+        // todo: MUTE
+        socket.on('user muted', ({ userId, isMuted }) => {
+            // Update the UI to reflect the mute state of the user
+        });
+
+        // todo: Flip camera
+        socket.on('flip camera', async () => {
+            try {
+                const videoTracks = userStream.getVideoTracks();
+                // Assume the first video track is the one being used
+                if (videoTracks.length > 0) {
+                    const currentTrack = videoTracks[0];
+                    // Use the facingMode constraint to flip the camera
+                    const constraints = { video: { facingMode: { exact: currentTrack.getSettings().facingMode === 'user' ? 'environment' : 'user' } } };
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    // Replace the track in all peer connections
+                    Object.values(peers).forEach(peer => {
+                        const sender = peer.getSenders().find(s => s.track.kind === 'video');
+                        if (sender) {
+                            sender.replaceTrack(stream.getVideoTracks()[0]);
+                        }
+                    });
+                    // Update the local stream
+                    if (userStream) {
+                        userStream.getVideoTracks().forEach(track => track.stop());
+                    }
+                    userStream = stream;
+                    // Optionally, update the local video element if you're displaying it
+                    document.getElementById('user-video').srcObject = stream;
+                }
+            } catch (error) {
+                console.error('Error flipping camera:', error);
+            }
+        });
+        
+        
     });
 }
 

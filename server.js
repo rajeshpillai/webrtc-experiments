@@ -58,6 +58,17 @@ io.on('connection', socket => {
         io.to(targetId).emit('show cam')
     })
 
+    // TODO: Mute
+    socket.on('mute action', ({ userId, isMuted }) => {
+        io.to(/* Room ID or User ID */).emit('user muted', { userId, isMuted });
+    });
+    
+    // TODO: Flip camera
+    socket.on('flip camera request', ({ userId }) => {
+        io.to(userId).emit('flip camera');
+    });
+    
+
 });
 
 server.listen(1337, () => console.log('server is running on port 1337'));
