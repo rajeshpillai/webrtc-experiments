@@ -25,8 +25,14 @@ function createPeer(userIdToCall) {
     const peer = new RTCPeerConnection({
         iceServers: [
             {
-                urls: "stun:stun.stunprotocol.org"
-            }
+                urls: 'stun:stun1.l.google.com:19302'
+              },
+              {
+                urls: 'stun:stun3.l.google.com:19302'
+              },
+              {
+                urls: 'stun:stun4.l.google.com:19302'
+              }
         ]
     });
     peer.onnegotiationneeded = () => userIdToCall ? handleNegotiationNeededEvent(peer, userIdToCall) : null;
@@ -95,7 +101,6 @@ function toggleMute(userID,stream, button) {
 
 //remoteVideoContainer.addEventListener('click', (e) => {
 function toggleRemoteCam(e, userId, button) {
-    alert(e);
     if (e.target.innerHTML.includes('Hide')) {
         e.target.innerHTML = 'show remote cam';
         socket.emit('hide remote cam', e.target.getAttribute('user-id'));
