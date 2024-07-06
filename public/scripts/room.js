@@ -13,7 +13,7 @@ function callOtherUsers(otherUsers, stream) {
         isAdmin = true;
     }
     otherUsers.forEach(userIdToCall => {
-        const peer = createPeer(userIdToCall);
+        const peer = createPeerConnection(userIdToCall);
         peers[userIdToCall] = peer;
         stream.getTracks().forEach(track => {
             peer.addTrack(track, stream);
@@ -21,24 +21,17 @@ function callOtherUsers(otherUsers, stream) {
     });
 }
 
-function createPeer(userIdToCall) {
+function createPeerConnection(targetUserId) {
     const peer = new RTCPeerConnection({
         iceServers: [
-            {
-                urls: 'stun:stun1.l.google.com:19302'
-              },
-              {
-                urls: 'stun:stun3.l.google.com:19302'
-              },
-              {
-                urls: 'stun:stun4.l.google.com:19302'
-              }
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' }
         ]
     });
-    peer.onnegotiationneeded = () => userIdToCall ? handleNegotiationNeededEvent(peer, userIdToCall) : null;
+    peer.onnegotiationneeded = () => targetUserId ? handleNegotiationNeededEvent(peer, targetUserId) : null;
     peer.onicecandidate = handleICECandidateEvent;
 
-    
     peer.ontrack = (e) => {
         const container = document.createElement('div');
         container.classList.add('remote-video-container');
@@ -51,78 +44,68 @@ function createPeer(userIdToCall) {
         if (isAdmin) {
             const btnRemoteCam = document.createElement("button");
             btnRemoteCam.innerHTML = `Hide user's cam`;
-            btnRemoteCam.classList.add('button','btn-toggle-remote-cam');
-            btnRemoteCam.setAttribute('user-id', userIdToCall);
-            btnRemoteCam.addEventListener('click', (e) =>  {
-                alert("Toggle remote Camera!");
-                toggleRemoteCam(e, userIdToCall, btnRemoteCam);
+            btnRemoteCam.classList.add('button', 'btn-toggle-remote-cam');
+            btnRemoteCam.setAttribute('user-id', targetUserId);
+            btnRemoteCam.addEventListener('click', (e) => {
+                toggleRemoteCamera(e, targetUserId, btnRemoteCam);
             });
             container.appendChild(btnRemoteCam);
 
-            // Mute Button
             const muteButton = document.createElement('button');
             muteButton.textContent = 'Mute';
             muteButton.classList.add('btn-toggle-remote-mic', 'button');
-            muteButton.addEventListener('click', () =>  {
-                alert("Toggle Mic!");
-                toggleMute(userIdToCall, e.streams[0], muteButton);
+            muteButton.addEventListener('click', () => {
+                toggleMute(targetUserId, e.streams[0], muteButton);
             });
-
             container.appendChild(muteButton);
 
-            // Flip camera
             const flipButton = document.createElement('button');
             flipButton.textContent = 'Flip Camera';
             flipButton.classList.add('flip-button', 'button');
             flipButton.addEventListener('click', () => {
-                alert("Flipping camera!");
-                socket.emit('flip camera request', { userId: userIdToCall });
+                socket.emit('request_flip_camera', targetUserId);
             });
-
             container.appendChild(flipButton);
         }
-        container.id = userIdToCall;
+        container.id = targetUserId;
         remoteVideoContainer.appendChild(container);
     }
     return peer;
 }
 
-function toggleMute(userID,stream, button) {
+function toggleMute(targetUserId, stream, button) {
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length > 0) {
         let isMuted = audioTracks[0].enabled;
         audioTracks.forEach(track => track.enabled = !isMuted);
         button.innerHTML = isMuted ? "Unmute" : "Mute";
         isMuted = !audioTracks[0].enabled;
-        socket.emit('mute action', { userId: userID, isMuted });
+        socket.emit('mute_user', { targetUserId, isMuted });
     }
 }
 
-
-//remoteVideoContainer.addEventListener('click', (e) => {
-function toggleRemoteCam(e, userId, button) {
-    if (e.target.innerHTML.includes('Hide')) {
-        e.target.innerHTML = 'show remote cam';
-        socket.emit('hide remote cam', e.target.getAttribute('user-id'));
+function toggleRemoteCamera(e, targetUserId, button) {
+    if (button.innerHTML.includes('Hide')) {
+        button.innerHTML = 'Show remote cam';
+        socket.emit('hide_remote_camera', targetUserId);
     } else {
-        e.target.innerHTML = `Hide user's cam`;
-        socket.emit('show remote cam', e.target.getAttribute('user-id'));
+        button.innerHTML = `Hide user's cam`;
+        socket.emit('show_remote_camera', targetUserId);
     }
 }
 
-async function handleNegotiationNeededEvent(peer, userIdToCall) {
+async function handleNegotiationNeededEvent(peer, targetUserId) {
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     const payload = {
         sdp: peer.localDescription,
-        userIdToCall,
+        targetUserId,
     };
-
-    socket.emit('peer connection request', payload);
+    socket.emit('send_offer', payload);
 }
 
 async function handleReceiveOffer({ sdp, callerId }, stream) {
-    const peer = createPeer(callerId);
+    const peer = createPeerConnection(callerId);
     peers[callerId] = peer;
     const desc = new RTCSessionDescription(sdp);
     await peer.setRemoteDescription(desc);
@@ -135,14 +118,14 @@ async function handleReceiveOffer({ sdp, callerId }, stream) {
     await peer.setLocalDescription(answer);
 
     const payload = {
-        userToAnswerTo: callerId,
+        targetUserId: callerId,
         sdp: peer.localDescription,
     };
 
-    socket.emit('connection answer', payload);
+    socket.emit('send_answer', payload);
 }
 
-function handleAnswer({ sdp, answererId }) {
+function handleReceiveAnswer({ sdp, answererId }) {
     const desc = new RTCSessionDescription(sdp);
     peers[answererId].setRemoteDescription(desc).catch(e => console.log(e));
 }
@@ -151,43 +134,41 @@ function handleICECandidateEvent(e) {
     if (e.candidate) {
         Object.keys(peers).forEach(id => {
             const payload = {
-                target: id,
+                targetUserId: id,
                 candidate: e.candidate,
-            }
-            socket.emit("ice-candidate", payload);
+            };
+            socket.emit('send_ice_candidate', payload);
         });
     }
 }
 
-function handleReceiveIce({ candidate, from }) {
-    const inComingCandidate = new RTCIceCandidate(candidate);
-    peers[from].addIceCandidate(inComingCandidate);
-};
+function handleReceiveIceCandidate({ candidate, senderId }) {
+    const incomingCandidate = new RTCIceCandidate(candidate);
+    peers[senderId].addIceCandidate(incomingCandidate);
+}
 
 function handleDisconnect(userId) {
     delete peers[userId];
     document.getElementById(userId).remove();
-};
+}
 
 toggleButton.addEventListener('click', () => {
     const videoTrack = userStream.getTracks().find(track => track.kind === 'video');
     if (videoTrack.enabled) {
         videoTrack.enabled = false;
-        toggleButton.innerHTML = 'Show cam'
+        toggleButton.innerHTML = 'Show cam';
     } else {
         videoTrack.enabled = true;
-        toggleButton.innerHTML = "Hide cam"
+        toggleButton.innerHTML = "Hide cam";
     }
 });
 
-
-
-function hideCam() {
+function hideCamera() {
     const videoTrack = userStream.getTracks().find(track => track.kind === 'video');
     videoTrack.enabled = false;
 }
 
-function showCam() {
+function showCamera() {
     const videoTrack = userStream.getTracks().find(track => track.kind === 'video');
     videoTrack.enabled = true;
 }
@@ -197,61 +178,53 @@ async function init() {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         userStream = stream;
         userVideo.srcObject = stream;
-        socket.emit('user joined room', roomId);
+        socket.emit('join_room', roomId);
 
-        socket.on('all other users', (otherUsers) => callOtherUsers(otherUsers, stream));
+        socket.on('existing_users', (otherUsers) => callOtherUsers(otherUsers, stream));
 
-        socket.on("connection offer", (payload) => handleReceiveOffer(payload, stream));
+        socket.on("receive_offer", (payload) => handleReceiveOffer(payload, stream));
 
-        socket.on('connection answer', handleAnswer);
+        socket.on('receive_answer', handleReceiveAnswer);
 
-        socket.on('ice-candidate', handleReceiveIce);
+        socket.on('receive_ice_candidate', handleReceiveIceCandidate);
 
-        socket.on('user disconnected', (userId) => handleDisconnect(userId));
+        socket.on('user_disconnected', handleDisconnect);
 
-        socket.on('hide cam', hideCam);
+        socket.on('hide_camera', hideCamera);
 
-        socket.on("show cam", showCam);
+        socket.on('show_camera', showCamera);
 
-        socket.on('server is full', () => alert("chat is full"));
+        socket.on('room_full', () => alert("Room is full"));
 
-        // todo: MUTE
-        socket.on('user muted', ({ userId, isMuted }) => {
+        socket.on('user_muted', ({ userId, isMuted }) => {
             // Update the UI to reflect the mute state of the user
         });
 
-        // todo: Flip camera
-        socket.on('flip camera', async () => {
+        socket.on('flip_camera', async () => {
             try {
                 const videoTracks = userStream.getVideoTracks();
-                // Assume the first video track is the one being used
                 if (videoTracks.length > 0) {
                     const currentTrack = videoTracks[0];
-                    // Use the facingMode constraint to flip the camera
                     const constraints = { video: { facingMode: { exact: currentTrack.getSettings().facingMode === 'user' ? 'environment' : 'user' } } };
                     const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    // Replace the track in all peer connections
                     Object.values(peers).forEach(peer => {
                         const sender = peer.getSenders().find(s => s.track.kind === 'video');
                         if (sender) {
                             sender.replaceTrack(stream.getVideoTracks()[0]);
                         }
                     });
-                    // Update the local stream
                     if (userStream) {
                         userStream.getVideoTracks().forEach(track => track.stop());
                     }
                     userStream = stream;
-                    // Optionally, update the local video element if you're displaying it
                     document.getElementById('user-video').srcObject = stream;
                 }
             } catch (error) {
                 console.error('Error flipping camera:', error);
             }
         });
-        
-        
     });
 }
 
 init();
+
